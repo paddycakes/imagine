@@ -2,15 +2,17 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"io/ioutil"
 	"log"
 	"net/http"
 	"os"
+
+	"github.com/paddycakes/imagine/imagemagick"
+	"github.com/paddycakes/imagine/model"
 )
 
 func main() {
-	http.HandleFunc("/", HelloPubSub)
+	http.HandleFunc("/", HandlePubSub)
 	port := os.Getenv("PORT")
 	if port == "" {
 		port = "8080"
@@ -24,18 +26,9 @@ func main() {
 	}
 }
 
-// PubSubMessage is the payload of a Pub/Sub event.
-type PubSubMessage struct {
-	Message struct {
-		Data []byte `json:"data,omitempty"`
-		ID   string `json:"id"`
-	} `json:"message"`
-	Subscription string `json:"subscription"`
-}
-
-// HelloPubSub receives and processes a Pub/Sub push message.
-func HelloPubSub(w http.ResponseWriter, r *http.Request) {
-	var m PubSubMessage
+// Receives and processes a Pub/Sub push message.
+func HandlePubSub(w http.ResponseWriter, r *http.Request) {
+	var m model.PubSubMessage
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		log.Printf("ioutil.ReadAll: %v", err)
@@ -48,16 +41,21 @@ func HelloPubSub(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	greeting := os.Getenv("TARGET")
-	if greeting == "" {
-		greeting = "Hello"
+	var e model.GCSEvent
+	if err := json.Unmarshal(m.Message.Data, &e); err != nil {
+		log.Printf("json.Unmarshal: %v", err)
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
 	}
 
-	name := string(m.Message.Data)
-	if name == "" {
-		name = "Go Lovers"
+	if e.Name == "" || e.Bucket == "" {
+		log.Printf("invalid GCSEvent: expected name and bucket")
+		http.Error(w, "Bad Request", http.StatusBadRequest)
+		return
 	}
 
-	fmt.Fprintf(w, "%s %s!\n", greeting, name)
-	log.Printf("go-crazy: %s %s!\n", greeting, name)
+	if err := imagemagick.BlurOffensiveImages(r.Context(), e); err != nil {
+		log.Printf("imagemagick.BlurOffensiveImages: %v", err)
+		http.Error(w, "Internal Server Error", http.StatusInternalServerError)
+	}
 }

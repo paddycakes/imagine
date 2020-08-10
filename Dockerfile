@@ -1,11 +1,8 @@
 FROM golang:1.13-buster as builder
 
-# Create and change to the app directory.
 WORKDIR /app
 
 # Retrieve application dependencies.
-# This allows the container build to reuse cached dependencies.
-# Expecting to copy go.mod and if present go.sum.
 COPY go.* ./
 RUN go mod download
 
@@ -13,16 +10,21 @@ RUN go mod download
 COPY . ./
 
 # Build the binary.
-RUN go build -mod=readonly -v -o server
+RUN CGO_ENABLED=0 go build -mod=readonly -v -o server
 
-FROM debian:buster-slim
-RUN set -x && apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    ca-certificates && \
-    rm -rf /var/lib/apt/lists/*
+# Use a Docker multi-stage build to create a lean production image.
+FROM alpine:3
+
+RUN apk add --no-cache imagemagick
+
+# Install certificates for secure communication with network services.
+# For production containers, a single RUN statement should install all system packages.
+RUN apk add --no-cache ca-certificates
 
 # Copy the binary to the production image from the builder stage.
-COPY --from=builder /app/server /server
+COPY --from=builder /app/server .
 
 # Run the web service on container startup.
 CMD ["/server"]
+
 
